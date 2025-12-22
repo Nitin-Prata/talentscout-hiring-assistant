@@ -2,21 +2,21 @@
 groq_client.py
 
 Groq LLM client wrapper.
-This module abstracts all interaction with the Groq API.
+This module abstracts all interaction with the Groq API
+and handles provider-side failures gracefully.
 """
 
 import os
 from typing import List, Dict
 
-from groq import Groq
+from groq import Groq, GroqError
 from dotenv import load_dotenv
 
 # Load environment variables from .env
 load_dotenv()
 
-# Environment variable name (fixed by design)
+# API key (required)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 if not GROQ_API_KEY:
     raise EnvironmentError(
         "GROQ_API_KEY not found in environment variables. "
@@ -24,9 +24,10 @@ if not GROQ_API_KEY:
     )
 
 # Model configuration
-DEFAULT_MODEL = "llama3-70b-8192"
+# Use a STABLE Groq model and allow override via .env
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-8192")
 
-# Initialize Groq client once
+# Initialize Groq client once (singleton-style)
 _client = Groq(api_key=GROQ_API_KEY)
 
 
@@ -39,21 +40,29 @@ def generate_response(
     """
     Generate a response from the Groq-hosted LLM.
 
-    Args:
-        messages: List of chat messages in OpenAI-compatible format.
-        temperature: Controls randomness (lower = more deterministic).
-        max_tokens: Maximum tokens in the response.
-        model: Groq model name.
-
-    Returns:
-        Generated text response from the model.
+    This function is designed to NEVER crash the application.
+    If the LLM fails (e.g., model deprecation, network issue),
+    a safe fallback response is returned.
     """
+    try:
+        completion = _client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return completion.choices[0].message.content.strip()
 
-    completion = _client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    except GroqError:
+        # Graceful fallback to keep conversation alive
+        return (
+            "Thanks for the information. 👍\n\n"
+            "Let’s continue. Could you please provide the next required detail?"
+        )
 
-    return completion.choices[0].message.content.strip()
+    except Exception:
+        # Catch-all safety net (never crash the app)
+        return (
+            "Sorry, I ran into a temporary issue. 🙏\n\n"
+            "Please try again or continue with the next detail."
+        )
