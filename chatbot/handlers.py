@@ -12,7 +12,6 @@ from chatbot.controller import check_exit, advance_stage
 from chatbot.validator import validate_and_extract
 from llm.groq_client import generate_response
 from prompts.system_prompt import SYSTEM_PROMPT
-from prompts.info_prompts import INFO_COLLECTION_PROMPT
 from prompts.tech_prompts import TECH_QUESTION_PROMPT
 from utils.constants import (
     STAGE_GREETING,
@@ -29,7 +28,7 @@ def handle_user_input(user_input: str, state: ConversationState) -> str:
     Returns the assistant's response text.
     """
 
-    # Global exit handling
+    # Global exit handling (works at any stage)
     if check_exit(user_input, state):
         return _handle_closing(state)
 
@@ -60,53 +59,46 @@ def _handle_greeting(state: ConversationState) -> str:
     advance_stage(state)
     return (
         "Hello! 👋 I’m TalentScout, your AI hiring assistant.\n\n"
-        "I’ll start by collecting some basic information for initial screening."
+        "I’ll start by collecting some basic information for initial screening.\n\n"
+        "Let’s begin — what’s your **full name**?"
     )
 
 
 def _handle_info_collection(user_input: str, state: ConversationState) -> str:
     """
-    Handle structured candidate information collection.
+    Handle structured candidate information collection
+    using deterministic, clear prompts (no LLM).
     """
 
-    # Try to extract and validate data from user input
+    # Extract and validate data from user input
     extracted: Dict[str, object] = validate_and_extract(
         user_input=user_input,
         candidate=state.candidate,
     )
 
-    # Update candidate profile with extracted values
+    # Update candidate profile
     for field, value in extracted.items():
         setattr(state.candidate, field, value)
 
-    # Check if all required fields are collected
+    # If all required fields are collected, move to tech questions
     if state.candidate.is_complete():
         advance_stage(state)
         return (
-            "Thank you for providing your details.\n\n"
-            "Next, I’ll ask you a few technical questions based on your tech stack."
+            "Thanks for sharing your details! ✅\n\n"
+            "Now I’ll ask you a few technical questions based on your tech stack."
         )
 
-    # Ask for the next missing field
+    # Ask explicitly for the next missing field (ChatGPT-style UX)
     next_field = state.candidate.next_missing_field()
     next_field_label = FIELD_LABELS.get(next_field, next_field)
 
-    prompt = INFO_COLLECTION_PROMPT.format(
-        collected_fields=state.candidate.model_dump(),
-        next_field_label=next_field_label,
-    )
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
-
-    return generate_response(messages)
+    return f"Got it 👍 Could you please provide your **{next_field_label}**?"
 
 
 def _handle_tech_questions(state: ConversationState) -> str:
     """
     Generate technical interview questions based on the tech stack.
+    This is the ONLY stage where the LLM is used.
     """
 
     prompt = TECH_QUESTION_PROMPT.format(
